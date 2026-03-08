@@ -88,8 +88,11 @@ def parse_upload(file) -> tuple[Optional[pd.DataFrame], list[str]]:
             df = _read_excel(file)
         else:
             df = _read_text(file)
-    except Exception as exc:
-        warnings.append(f"Could not read the file — it may be corrupted or in an unexpected format. ({exc})")
+    except Exception:
+        warnings.append(
+            "Could not read the file — it may be corrupted or in an unexpected format. "
+            "Please try saving it as a new file and uploading again."
+        )
         return None, warnings
 
     # --- Hard block: empty file ---

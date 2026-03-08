@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Callable, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -71,18 +71,24 @@ def _fuzzy_match(
     threshold: float,
 ) -> dict[int, tuple[str, float, str]]:
     """Return index → (canonical, score, method) for fuzzy matches above threshold."""
-    matches: dict[int, tuple[str, float, str]] = {}
-    for i in unmatched_indices:
-        best_score = 0.0
-        best_candidate = ""
-        for j, cand in enumerate(candidates):
-            score = fuzz.token_sort_ratio(preprocessed[i], cand) / 100.0
-            if score > best_score:
-                best_score = score
-                best_candidate = original_candidates[j]
-        if best_score >= threshold:
-            matches[i] = (best_candidate, round(best_score, 4), "fuzzy")
-    return matches
+    try:
+        matches: dict[int, tuple[str, float, str]] = {}
+        for i in unmatched_indices:
+            best_score = 0.0
+            best_candidate = ""
+            for j, cand in enumerate(candidates):
+                score = fuzz.token_sort_ratio(preprocessed[i], cand) / 100.0
+                if score > best_score:
+                    best_score = score
+                    best_candidate = original_candidates[j]
+            if best_score >= threshold:
+                matches[i] = (best_candidate, round(best_score, 4), "fuzzy")
+        return matches
+    except Exception:
+        raise RuntimeError(
+            "Something went wrong while comparing names. "
+            "Please check your file for unusual characters and try again."
+        )
 
 
 def _semantic_match(
@@ -97,11 +103,17 @@ def _semantic_match(
 
     unmatched_texts = [original_names[i] for i in unmatched_indices]
 
-    # Embed both sides
-    emb_names = embed_items(unmatched_texts)
-    emb_candidates = embed_items(original_candidates)
-
-    sim_matrix = cosine_similarity(emb_names, emb_candidates)
+    try:
+        emb_names = embed_items(unmatched_texts)
+        emb_candidates = embed_items(original_candidates)
+        sim_matrix = cosine_similarity(emb_names, emb_candidates)
+    except RuntimeError:
+        raise
+    except Exception:
+        raise RuntimeError(
+            "Something went wrong while analyzing name similarity. "
+            "Please try again or adjust your settings."
+        )
 
     matches: dict[int, tuple[str, float, str]] = {}
     ambiguous_pairs: list[dict] = []

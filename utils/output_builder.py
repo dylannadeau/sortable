@@ -24,11 +24,22 @@ _ALIGN_WRAP = Alignment(vertical="top", wrap_text=True)
 
 def to_csv(df: pd.DataFrame) -> bytes:
     """Return the DataFrame as UTF-8 encoded CSV bytes."""
-    return df.to_csv(index=False).encode("utf-8")
+    try:
+        return df.to_csv(index=False).encode("utf-8")
+    except Exception:
+        raise RuntimeError("Could not generate the CSV file. Please try again.")
 
 
 def to_excel(df: pd.DataFrame, metadata: dict) -> bytes:
     """Return a styled .xlsx file as bytes with Results and Run Info sheets."""
+    try:
+        return _build_excel(df, metadata)
+    except Exception:
+        raise RuntimeError("Could not generate the Excel file. Please try again.")
+
+
+def _build_excel(df: pd.DataFrame, metadata: dict) -> bytes:
+    """Build the styled Excel workbook and return as bytes."""
     wb = Workbook()
 
     # -- Sheet 1: Results -----------------------------------------------------
@@ -89,7 +100,7 @@ def build_metadata(module: str, params: dict, row_count: int) -> dict:
         "module": module,
         "parameters": params,
         "row_count": row_count,
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
     }
 
 
