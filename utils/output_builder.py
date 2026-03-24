@@ -93,14 +93,14 @@ def _build_excel(df: pd.DataFrame, metadata: dict) -> bytes:
     return buf.read()
 
 
-def build_metadata(module: str, params: dict, row_count: int) -> dict:
+def build_metadata(module: str, params: dict, row_count: int, model: str = "") -> dict:
     """Build a standard metadata dict for an export run."""
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "module": module,
         "parameters": params,
         "row_count": row_count,
-        "model": "claude-sonnet-4-6",
+        "model": model or "unknown",
     }
 
 

@@ -2,7 +2,7 @@
 
 import streamlit as st
 
-from ui.shared import render_api_key_input
+from ui.shared import render_provider_selector
 from ui.tab_bucketing import render_bucketing_tab
 from ui.tab_standardization import render_standardization_tab
 
@@ -180,9 +180,9 @@ st.markdown(
 )
 st.markdown("<hr style='margin-top: 0.5rem; margin-bottom: 1.5rem;'>", unsafe_allow_html=True)
 
-# -- API key ------------------------------------------------------------------
+# -- AI provider --------------------------------------------------------------
 
-render_api_key_input()
+render_provider_selector()
 st.divider()
 
 # -- Tabs ---------------------------------------------------------------------
@@ -199,9 +199,11 @@ with tab_standardization:
 
 # -- Footer -------------------------------------------------------------------
 
+_provider = st.session_state.get("llm_provider", "ollama")
+_footer = "Powered by Ollama (local)" if _provider == "ollama" else "Powered by Claude · Keys are session-only and never stored"
 st.markdown(
-    '<p style="font-family: \'IBM Plex Sans\', sans-serif; color: #6B6860; '
-    'font-size: 0.75rem; text-align: center; margin-top: 3rem; padding-bottom: 1rem;">'
-    "Powered by Claude · Keys are session-only and never stored</p>",
+    f'<p style="font-family: \'IBM Plex Sans\', sans-serif; color: #6B6860; '
+    f'font-size: 0.75rem; text-align: center; margin-top: 3rem; padding-bottom: 1rem;">'
+    f"{_footer}</p>",
     unsafe_allow_html=True,
 )

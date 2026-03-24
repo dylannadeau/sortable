@@ -12,7 +12,7 @@ from rapidfuzz import fuzz
 from sklearn.metrics.pairwise import cosine_similarity
 
 from modules.bucketing import embed_items
-from modules.llm import resolve_ambiguous_entities
+from modules.llm import LLMConfig, resolve_ambiguous_entities
 
 _LEGAL_SUFFIXES: list[str] = [
     "LLC", "Inc", "Corp", "Corporation", "Ltd", "Limited", "Co", "Company",
@@ -95,7 +95,7 @@ def _semantic_match(
     original_names: list[str],
     unmatched_indices: list[int],
     original_candidates: list[str],
-    api_key: str,
+    config: LLMConfig,
 ) -> dict[int, tuple[str, float, str]]:
     """Return index → (canonical, score, method) for semantic and AI-resolved matches."""
     if not unmatched_indices or not original_candidates:
@@ -136,7 +136,7 @@ def _semantic_match(
 
     # Resolve ambiguous pairs via Claude
     if ambiguous_pairs:
-        resolved = resolve_ambiguous_entities(api_key, ambiguous_pairs)
+        resolved = resolve_ambiguous_entities(config, ambiguous_pairs)
         for pair, orig_idx in zip(resolved, ambiguous_index_map):
             if pair.get("ai_match", False):
                 matches[orig_idx] = (pair["candidate"], pair["score"], "ai-resolved")
@@ -155,7 +155,7 @@ def find_canonical(
     canonical_list: Optional[list[str]],
     strictness: int,
     seed: Optional[int],
-    api_key: str,
+    config: LLMConfig,
     strip_suffixes: bool = True,
 ) -> pd.DataFrame:
     """Run the full entity standardization pipeline and return a results DataFrame."""
@@ -186,7 +186,7 @@ def find_canonical(
 
     # -- Step 3: Semantic + AI match ------------------------------------------
     unmatched = [i for i in range(len(names)) if i not in all_matches]
-    semantic = _semantic_match(names, unmatched, original_candidates, api_key)
+    semantic = _semantic_match(names, unmatched, original_candidates, config)
     all_matches.update(semantic)
 
     # -- Step 4: Build results ------------------------------------------------

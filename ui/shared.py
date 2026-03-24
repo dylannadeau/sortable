@@ -1,4 +1,4 @@
-"""Shared UI components — API key input, file uploader, validation display."""
+"""Shared UI components — provider selector, file uploader, validation display."""
 
 from __future__ import annotations
 
@@ -8,12 +8,115 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from modules.llm import validate_api_key
+from modules.llm import (
+    LLMConfig,
+    _CLAUDE_MODEL,
+    list_ollama_models,
+    validate_api_key,
+    validate_ollama,
+)
 from utils.file_parser import parse_upload
 from utils.output_builder import to_csv, to_excel
 
 
-def render_api_key_input() -> Optional[str]:
+# ---------------------------------------------------------------------------
+# Provider selector (Ollama default, Claude alternative)
+# ---------------------------------------------------------------------------
+
+
+def render_provider_selector() -> None:
+    """Render provider toggle and the appropriate config panel."""
+    st.markdown(
+        '<p style="font-family: \'IBM Plex Sans\', sans-serif; font-size: 0.85rem; '
+        'color: #6B6860; letter-spacing: 0.05em; text-transform: uppercase; '
+        'margin-bottom: 0.25rem;">AI Provider</p>',
+        unsafe_allow_html=True,
+    )
+
+    provider = st.radio(
+        "AI Provider",
+        options=["Local (Ollama)", "Claude API"],
+        index=0 if st.session_state.get("llm_provider", "ollama") == "ollama" else 1,
+        key="provider_radio",
+        label_visibility="collapsed",
+        horizontal=True,
+    )
+
+    # Map radio label to internal key
+    chosen = "ollama" if provider == "Local (Ollama)" else "claude"
+
+    # Clear other provider's validation when switching
+    prev = st.session_state.get("llm_provider")
+    if prev != chosen:
+        if chosen == "claude":
+            st.session_state.pop("ollama_validated", None)
+        else:
+            st.session_state.pop("api_key", None)
+            st.session_state.pop("_api_key_raw", None)
+            st.session_state.pop("_api_key_error", None)
+    st.session_state["llm_provider"] = chosen
+
+    if chosen == "ollama":
+        _render_ollama_config()
+    else:
+        _render_api_key_input()
+
+
+def _render_ollama_config() -> None:
+    """Render Ollama model selector and connection verifier."""
+    models, error = list_ollama_models()
+
+    if error:
+        st.error(error)
+        return
+
+    if not models:
+        st.warning(
+            "Ollama is running but has no models installed. "
+            "Open your terminal and run `ollama pull llama3` to get started."
+        )
+        return
+
+    # Already validated and model unchanged
+    prev_model = st.session_state.get("ollama_model")
+    if st.session_state.get("ollama_validated") and prev_model in models:
+        default_idx = models.index(prev_model)
+    else:
+        default_idx = 0
+
+    selected = st.selectbox(
+        "Model",
+        options=models,
+        index=default_idx,
+        key="ollama_model_select",
+        help="Pick a locally installed model. We recommend llama3 for a good balance of speed and quality.",
+    )
+
+    # Model changed — clear validation
+    if selected != st.session_state.get("ollama_model"):
+        st.session_state.pop("ollama_validated", None)
+        st.session_state["ollama_model"] = selected
+
+    if st.session_state.get("ollama_validated"):
+        st.markdown(
+            f'<p style="color: #1A7F5A; font-family: \'IBM Plex Sans\', sans-serif;">'
+            f"&#10003; Connected to Ollama &mdash; using {selected}</p>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    if st.button("Verify connection", key="validate_ollama_btn"):
+        with st.spinner("Checking Ollama connection..."):
+            valid, err_msg = validate_ollama(selected)
+        if valid:
+            st.session_state["ollama_validated"] = True
+            st.session_state["ollama_model"] = selected
+            st.rerun()
+        else:
+            st.error(err_msg)
+
+
+def _render_api_key_input() -> None:
     """Render the API key input field with validation feedback."""
     st.markdown(
         '<p style="font-family: \'IBM Plex Sans\', sans-serif; font-size: 0.85rem; '
@@ -40,7 +143,7 @@ def render_api_key_input() -> Optional[str]:
             "&#10003; API key verified</p>",
             unsafe_allow_html=True,
         )
-        return st.session_state["api_key"]
+        return
 
     # Key changed — clear old validation
     if st.session_state.get("_api_key_raw") != raw_key:
@@ -55,7 +158,7 @@ def render_api_key_input() -> Optional[str]:
             "Your key is used only this session and never saved.</p>",
             unsafe_allow_html=True,
         )
-        return None
+        return
 
     # Show validation error from previous attempt
     prev_error = st.session_state.get("_api_key_error")
@@ -80,7 +183,33 @@ def render_api_key_input() -> Optional[str]:
             st.session_state.pop("api_key", None)
             st.rerun()
 
+
+# ---------------------------------------------------------------------------
+# Config reader (called by tab modules)
+# ---------------------------------------------------------------------------
+
+
+def get_llm_config() -> LLMConfig | None:
+    """Build an LLMConfig from current session state, or None if not ready."""
+    provider = st.session_state.get("llm_provider", "ollama")
+
+    if provider == "claude":
+        api_key = st.session_state.get("api_key")
+        if not api_key:
+            return None
+        return LLMConfig(provider="claude", model=_CLAUDE_MODEL, api_key=api_key)
+
+    # Ollama
+    if st.session_state.get("ollama_validated"):
+        model = st.session_state.get("ollama_model", "")
+        if model:
+            return LLMConfig(provider="ollama", model=model)
     return None
+
+
+# ---------------------------------------------------------------------------
+# File upload & column selection
+# ---------------------------------------------------------------------------
 
 
 def render_file_uploader(tab_key: str) -> tuple[Optional[pd.DataFrame], list[str]]:

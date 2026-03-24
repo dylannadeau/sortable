@@ -6,6 +6,7 @@ import streamlit as st
 
 from modules.standardization import find_canonical
 from ui.shared import (
+    get_llm_config,
     render_column_selector,
     render_download_buttons,
     render_file_uploader,
@@ -151,11 +152,11 @@ def render_standardization_tab() -> None:
         )
 
     # -- Run button -----------------------------------------------------------
-    api_key = st.session_state.get("api_key")
-    can_run = api_key is not None
+    llm_config = get_llm_config()
+    can_run = llm_config is not None
 
     if not can_run:
-        st.info("Enter and validate your API key at the top of the page to enable standardization.")
+        st.info("Set up your AI provider at the top of the page to enable standardization.")
 
     run_clicked = st.button(
         "Run Standardization",
@@ -186,7 +187,7 @@ def render_standardization_tab() -> None:
                 canonical_list=canonical_list,
                 strictness=strictness,
                 seed=seed,
-                api_key=api_key,
+                config=llm_config,
                 strip_suffixes=strip_suffixes,
             )
 
@@ -200,7 +201,7 @@ def render_standardization_tab() -> None:
                 "consistent_results": consistent,
                 "master_list": "provided" if canonical_list else "auto-detect",
             }
-            metadata = build_metadata("standardization", params, len(result_df))
+            metadata = build_metadata("standardization", params, len(result_df), model=llm_config.model)
 
             st.session_state["std_results"] = result_df
             st.session_state["std_metadata"] = metadata

@@ -1,16 +1,35 @@
-"""Centralized Claude API interface — all LLM calls, retries, and error handling."""
+"""Centralized LLM interface — all LLM calls, retries, and error handling."""
 
 from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
+import requests
 
-MODEL = "claude-sonnet-4-6"
+_CLAUDE_MODEL = "claude-sonnet-4-6"
 _MAX_RETRIES = 3
 _BASE_DELAY = 1.0  # seconds
+_OLLAMA_BASE_URL = "http://localhost:11434"
+_OLLAMA_TIMEOUT = 120  # seconds
+
+
+@dataclass
+class LLMConfig:
+    """Configuration for the active LLM provider."""
+
+    provider: str = "ollama"  # "ollama" or "claude"
+    model: str = ""
+    api_key: str | None = None  # Claude only
+    ollama_base_url: str = field(default=_OLLAMA_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# Internal call helpers
+# ---------------------------------------------------------------------------
 
 
 def _call_claude(api_key: str, system: str, user: str, max_tokens: int = 4096) -> str:
@@ -21,7 +40,7 @@ def _call_claude(api_key: str, system: str, user: str, max_tokens: int = 4096) -
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.create(
-                model=MODEL,
+                model=_CLAUDE_MODEL,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": user}],
@@ -49,6 +68,60 @@ def _call_claude(api_key: str, system: str, user: str, max_tokens: int = 4096) -
     ) from last_err
 
 
+def _call_ollama(config: LLMConfig, system: str, user: str) -> str:
+    """Send a chat request to Ollama and return the text response, with retry logic."""
+    url = f"{config.ollama_base_url}/api/chat"
+    payload = {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "stream": False,
+    }
+    last_err: Exception | None = None
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            resp = requests.post(url, json=payload, timeout=_OLLAMA_TIMEOUT)
+            resp.raise_for_status()
+            return resp.json()["message"]["content"]
+        except requests.ConnectionError as exc:
+            raise RuntimeError(
+                "Could not connect to Ollama. Make sure the Ollama app is running "
+                "on your computer (or run 'ollama serve' in your terminal)."
+            ) from exc
+        except requests.Timeout as exc:
+            last_err = exc
+            time.sleep(_BASE_DELAY * (2 ** attempt))
+        except requests.HTTPError as exc:
+            raise RuntimeError(
+                f"Ollama returned an error ({resp.status_code}). "
+                "The model may not support this request — try a different model."
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(
+                f"An unexpected error occurred while contacting Ollama: {exc}"
+            ) from exc
+
+    raise RuntimeError(
+        "The local model is taking too long to respond. "
+        "Try a smaller model or shorter input."
+    ) from last_err
+
+
+def _call_llm(config: LLMConfig, system: str, user: str, max_tokens: int = 4096) -> str:
+    """Route an LLM call to the configured provider."""
+    if config.provider == "ollama":
+        return _call_ollama(config, system, user)
+    return _call_claude(config.api_key, system, user, max_tokens)
+
+
+# ---------------------------------------------------------------------------
+# JSON parsing helper
+# ---------------------------------------------------------------------------
+
+
 def _parse_json(text: str, expected_type: type) -> Any:
     """Extract and parse the first JSON object or array from a text response."""
     # Strip markdown fences if present
@@ -71,12 +144,57 @@ def _parse_json(text: str, expected_type: type) -> Any:
     return json.loads(cleaned[start : end + 1])
 
 
+# ---------------------------------------------------------------------------
+# Ollama-specific helpers
+# ---------------------------------------------------------------------------
+
+
+def list_ollama_models(base_url: str = _OLLAMA_BASE_URL) -> tuple[list[str], str]:
+    """Fetch locally installed Ollama models. Returns (model_names, error_msg)."""
+    try:
+        resp = requests.get(f"{base_url}/api/tags", timeout=5)
+        resp.raise_for_status()
+        models = resp.json().get("models", [])
+        names = [m["name"] for m in models]
+        return sorted(names), ""
+    except requests.ConnectionError:
+        return [], (
+            "Could not connect to Ollama. Make sure the Ollama app is running "
+            "on your computer (or run 'ollama serve' in your terminal)."
+        )
+    except Exception as exc:
+        return [], f"Could not fetch models from Ollama: {exc}"
+
+
+def validate_ollama(model: str, base_url: str = _OLLAMA_BASE_URL) -> tuple[bool, str]:
+    """Check that Ollama is running and the specified model is available."""
+    models, error = list_ollama_models(base_url)
+    if error:
+        return False, error
+    if not models:
+        return False, (
+            "Ollama is running but has no models installed. "
+            "Open your terminal and run 'ollama pull llama3' to get started."
+        )
+    if model not in models:
+        return False, (
+            f"Model '{model}' is not installed. "
+            f"Available models: {', '.join(models[:5])}"
+        )
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Claude API key validation
+# ---------------------------------------------------------------------------
+
+
 def validate_api_key(api_key: str) -> tuple[bool, str]:
     """Verify that an API key is valid by making a minimal API call."""
     try:
         client = anthropic.Anthropic(api_key=api_key)
         client.messages.create(
-            model=MODEL,
+            model=_CLAUDE_MODEL,
             max_tokens=10,
             messages=[{"role": "user", "content": "Hi"}],
         )
@@ -91,8 +209,13 @@ def validate_api_key(api_key: str) -> tuple[bool, str]:
         return False, f"Could not validate the API key: {exc}"
 
 
-def label_clusters(api_key: str, clusters: dict[int, list[str]], style: str) -> dict[int, str]:
-    """Generate a human-readable label for each cluster using Claude."""
+# ---------------------------------------------------------------------------
+# Public LLM functions
+# ---------------------------------------------------------------------------
+
+
+def label_clusters(config: LLMConfig, clusters: dict[int, list[str]], style: str) -> dict[int, str]:
+    """Generate a human-readable label for each cluster using the configured LLM."""
     style_guidance = {
         "Short": "Use 1-2 words per label. Be concise.",
         "Descriptive": "Use 3-6 words per label. Be clear and descriptive.",
@@ -113,7 +236,7 @@ def label_clusters(api_key: str, clusters: dict[int, list[str]], style: str) -> 
     )
     user = f"Label these groups:\n\n{cluster_desc}"
 
-    text = _call_claude(api_key, system, user)
+    text = _call_llm(config, system, user)
 
     try:
         raw = _parse_json(text, dict)
@@ -122,8 +245,8 @@ def label_clusters(api_key: str, clusters: dict[int, list[str]], style: str) -> 
         return {cid: f"Group {cid}" for cid in clusters}
 
 
-def resolve_ambiguous_entities(api_key: str, pairs: list[dict]) -> list[dict]:
-    """Ask Claude whether each ambiguous entity pair refers to the same entity."""
+def resolve_ambiguous_entities(config: LLMConfig, pairs: list[dict]) -> list[dict]:
+    """Ask the configured LLM whether each ambiguous entity pair refers to the same entity."""
     if not pairs:
         return []
 
@@ -141,7 +264,7 @@ def resolve_ambiguous_entities(api_key: str, pairs: list[dict]) -> list[dict]:
     )
     user = f"Are these the same entity?\n\n{pair_lines}"
 
-    text = _call_claude(api_key, system, user)
+    text = _call_llm(config, system, user)
 
     try:
         results = _parse_json(text, list)

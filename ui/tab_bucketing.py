@@ -14,6 +14,7 @@ from modules.bucketing import (
 )
 from modules.llm import label_clusters
 from ui.shared import (
+    get_llm_config,
     render_column_selector,
     render_download_buttons,
     render_file_uploader,
@@ -121,11 +122,11 @@ def render_bucketing_tab() -> None:
         )
 
     # -- Run button -----------------------------------------------------------
-    api_key = st.session_state.get("api_key")
-    can_run = api_key is not None
+    llm_config = get_llm_config()
+    can_run = llm_config is not None
 
     if not can_run:
-        st.info("Enter and validate your API key at the top of the page to enable grouping.")
+        st.info("Set up your AI provider at the top of the page to enable grouping.")
 
     run_clicked = st.button(
         "Run Grouping",
@@ -174,7 +175,7 @@ def render_bucketing_tab() -> None:
                 members = [items[i] for i, l in enumerate(labels) if l == cid]
                 cluster_samples[cid] = members[:10]
 
-            cluster_names = label_clusters(api_key, cluster_samples, label_style)
+            cluster_names = label_clusters(llm_config, cluster_samples, label_style)
 
             # Step 6: Build DataFrame
             status.text("Done!")
@@ -189,7 +190,7 @@ def render_bucketing_tab() -> None:
                 "label_style": label_style,
                 "consistent_results": consistent,
             }
-            metadata = build_metadata("bucketing", params, len(result_df))
+            metadata = build_metadata("bucketing", params, len(result_df), model=llm_config.model)
             st.session_state["bucketing_results"] = result_df
             st.session_state["bucketing_metadata"] = metadata
 
